@@ -4,28 +4,34 @@ var debounce = require('debounce-async');
 const { getDayTime, parseTime, delay, getTimeAndDate } = require('./common')
 var k = new inputEvent('event6'); // 'event0' is the file corresponding to my keyboard in /dev/input/
 
-let currentDimmer = 400
-const maxRange = 500
-const minRange = 450
-const nightRange = 440
 
-const displayTimeout = 60000 // 60sek
 
-var timer
+
 exec(`gpio -g pwm 18 1024`);
 exec(`gpio -g mode 18 pwm`);
 exec(`gpio pwmc 1000`);
-exec(`gpio -g pwm 18 ${currentDimmer}`)
+exec(`gpio -g pwm 18 ${500}`)
 
-let obj = []
 
-for (let index = 0; index < 100; index++) {
-    obj.push(index)
-}
 
 class DisplayDimmer {
     constructor() {
         (async () => {
+            this.displayTimeout = 60000 // 60sek
+            this.timer
+            this.currentDimmer = 400
+            this.maxRange = 500
+            this.minRange = 450
+            this.nightRange = 440
+            this.iterator = []
+            for (let index = 0; index < 100; index++) this.iterator.push(index)
+
+            const debouncer = debounce.default(this.touchEvent.bind(this), 100)
+            k.on('rel', debouncer);
+            k.on('abs', debouncer);
+            k.on('syn', debouncer);
+            this.lastTouchDate = 0
+
             console.log(`App initialized at ${getTimeAndDate()}`)
             await delay(15000)
             // delay for raspi to download current time from internet - only when first boot
@@ -42,19 +48,19 @@ class DisplayDimmer {
     }
     async initDisplayForSunset() {
         console.log(`initDisplayForSunset at ${getTimeAndDate()}`)
-        for (const key of obj) {
-            if (currentDimmer < nightRange) {
-                currentDimmer++
-                await setDimmer(currentDimmer);
+        for (const key of this.iterator) {
+            if (this.currentDimmer < this.nightRange) {
+                this.currentDimmer++
+                await this.setDimmer(this.currentDimmer);
             }
         }
     }
     async initDisplayForSunrise() {
         console.log(`initDisplayForSunset at ${getTimeAndDate()}`)
-        for (const key of obj) {
-            if (currentDimmer < minRange) {
-                currentDimmer++
-                await setDimmer(currentDimmer);
+        for (const key of this.iterator) {
+            if (this.currentDimmer < this.minRange) {
+                this.currentDimmer++
+                await this.setDimmer(this.currentDimmer);
             }
         }
     }
@@ -110,63 +116,52 @@ class DisplayDimmer {
         await this.initTimersForSunset();
         await this.initTimersForSunrise();
     }
-}
-
-
-const setDimmer = function (dimm) {
-    return new Promise((resolve, reject) => {
-        console.log(`Dimmer set dimmer ${dimm}`)
-        exec(`gpio -g pwm 18 ${dimm}`, (error, stdout, stderr) => {
-            if (error) {
-                reject(error);
-            }
-            if (stderr) {
-                resolve();
-            }
-            resolve();
-        });
-    });
-}
-
-const touchEvent = async (data) => {
-    const diffDate = Date.now() - lastTouchDate
-    if (diffDate > displayTimeout) {
-        console.log('Light up backlight')
-        for (const key of obj) {
-            if (currentDimmer < maxRange) {
-                currentDimmer++
-                currentDimmer++
-                currentDimmer++
-                currentDimmer++
-                currentDimmer++
-                await setDimmer(currentDimmer);
+    async touchEvent(data) {
+        const diffDate = Date.now() - this.lastTouchDate
+        console.log(diffDate, this.displayTimeout)
+        if (diffDate > this.displayTimeout) {
+            console.log('Light up backlight')
+            for (const key of this.iterator) {
+                if (this.currentDimmer < this.maxRange) {
+                    this.currentDimmer++
+                    this.currentDimmer++
+                    this.currentDimmer++
+                    this.currentDimmer++
+                    this.currentDimmer++
+                    await this.setDimmer(this.currentDimmer);
+                }
             }
         }
+        console.log('Light down backlight scheduled')
+        if (this.timer) clearTimeout(this.timer)
+        this.timer = setTimeout(async function () {
+            console.log(`Light down backlight`)
+            const value = displayDimmer.isSunset ? this.nightRange : this.minRange
+            for (const key of this.iterator) {
+                if (this.currentDimmer > value) {
+                    this.currentDimmer--
+                    await this.setDimmer(this.currentDimmer);
+                } else {
+                    return
+                }
+            }
+        }.bind(this), this.displayTimeout)
+        this.lastTouchDate = Date.now()
     }
-    console.log('Light down backlight scheduled')
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(async function () {
-        console.log(`Light down backlight`)
-        const value = displayDimmer.isSunset ? nightRange : minRange
-        for (const key of obj) {
-            if (currentDimmer > value) {
-                currentDimmer--
-                await setDimmer(currentDimmer);
-            } else {
-                return
-            }
-        }
-    }, displayTimeout)
-    lastTouchDate = Date.now()
+    setDimmer(dimm) {
+        return new Promise((resolve, reject) => {
+            console.log(`Dimmer set dimmer ${dimm}`)
+            exec(`gpio -g pwm 18 ${dimm}`, (error, stdout, stderr) => {
+                if (error) {
+                    reject(error);
+                }
+                if (stderr) {
+                    resolve();
+                }
+                resolve();
+            });
+        });
+    }
 }
-
-
-var debounced = debounce.default(touchEvent, 100);
-
-
-k.on('rel', debounced);
-k.on('abs', debounced);
-k.on('syn', debounced);
-var lastTouchDate = 0
 
 const displayDimmer = new DisplayDimmer()
